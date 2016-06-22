@@ -3,19 +3,21 @@ from functools import partial
 
 PRJ_ROOT = next(shell("readlink -e .", iterable=True))
 SUPERFOCUS_DIR = "{0}/sw/SUPERFOCUS_0.24".format(PRJ_ROOT)
-
+DBS = ["dbcan", #"tools.aa", "tools.ce", #"tools.gh",
+      #"tools.gt", "tools.pl"
+]
 
 rule all:
     input:
-        expand("outputs/diamond/{db}/{sample}-{depth}D.daa",
-               db=["dbcan", "tools.aa", "tools.ce", #"tools.gh",
-                   "tools.gt", "tools.pl"],
+        expand("outputs/{tool}/{db}/{sample}-{depth}D.daa",
+               tool=['diamond', 'blast'],
+               db=DBS,
                sample=[1, 2, 3],
                depth=[2, 6, 15]
                ),
-        expand("outputs/diamond/{sample}-{depth}D/{db}.daa",
-               db=["dbcan", "tools.aa", "tools.ce", #"tools.gh",
-                   "tools.gt", "tools.pl"],
+        expand("outputs/{tool}/{sample}-{depth}D/{db}.daa",
+               tool=['diamond', 'blast'],
+               db=DBS,
                sample=[1, 2, 3],
                depth=[2, 6, 15]
                )
@@ -37,19 +39,39 @@ rule download_cazy_tools:
         rm {output}.zip
     """
 
-rule prepare_db_seqs:
+rule prepare_db_diamond_seqs:
     input: "outputs/merged/{sample}-{depth}D.assembled.fasta.gz"
     output: "outputs/diamond/db/samples/{sample}-{depth}D.dmnd"
     shell: """
         diamond makedb --in {input} -d {output}
     """
 
-rule prepare_db_cazy:
+rule prepare_db_diamond_cazy:
     input: "inputs/db/cazy.{dbid}.fa"
     output: "outputs/diamond/db/cazy/{dbid}.dmnd"
     shell: """
         diamond makedb --in {input} -d {output}
     """
+
+rule prepare_db_blast_seqs:
+    input: "outputs/merged/{sample}-{depth}D.assembled.fasta.gz"
+    output:
+        expand("outputs/blast/db/samples/{{sample}}-{{depth}}D.{extension}",
+               extension=['phr', 'pin', 'psq'])
+    run:
+        db = os.path.splitext(output[0])[0]
+        shell("gunzip -c {input} > {input}.tmp")
+        shell('makeblastdb -dbtype prot -in {input}.tmp -out {db}')
+        shell("rm {input}.tmp")
+
+rule prepare_db_blast_cazy:
+    input: "inputs/db/cazy.{dbid}.fa"
+    output:
+        expand("outputs/blast/db/cazy/{{dbid}}.{extension}",
+               extension=['phr', 'pin', 'psq'])
+    run:
+        db = os.path.splitext(output[0])[0]
+        shell("makeblastdb -dbtype prot -in {input} -out {db}")
 
 rule diamond_search_seqs:
     input:
@@ -58,7 +80,9 @@ rule diamond_search_seqs:
     output: "outputs/diamond/{sample}-{depth}D/{dbid}.daa"
     threads: 4
     shell: """
-        diamond blastp -d {input.db} -q {input.query} -a {output} -p {threads}
+        diamond blastp -k 100 --sensitive \
+                       -d {input.db} -q {input.query} \
+                       -a {output} -p {threads}
     """
 
 rule diamond_search_db:
@@ -68,9 +92,36 @@ rule diamond_search_db:
     output: "outputs/diamond/{dbid}/{sample}-{depth}D.daa"
     threads: 4
     shell: """
-        diamond blastx -d {input.db} -q {input.query} -a {output} -p {threads}
+        diamond blastx -k 100 --sensitive \
+                       -d {input.db} -q {input.query} \
+                       -a {output} -p {threads}
     """
 
+rule blast_search_seqs:
+    input:
+       db="outputs/blast/db/samples/{sample}-{depth}D.phr",
+       query="inputs/db/cazy.{dbid}.fa"
+    output: "outputs/blast/{sample}-{depth}D/{dbid}.out"
+    threads: 16
+    run:
+        db = os.path.splitext(input.db)[0]
+        shell("blastp -evalue 1e9 -outfmt 6 "
+              "-db {db} -query {input.query} "
+              "-out {output} -num_threads {threads}")
+
+rule blast_search_db:
+    input:
+       db="outputs/blast/db/cazy/{dbid}.phr",
+       query="outputs/merged/{sample}-{depth}D.assembled.fasta.gz"
+    output: "outputs/blast/{dbid}/{sample}-{depth}D.out"
+    threads: 16
+    run:
+        db = os.path.splitext(input.db)[0]
+        shell("gunzip -c {input.query} > {input.query}.tmp")
+        shell("blastx -evalue 1e9 -outfmt 6 "
+              "-db {db} -query {input.query}.tmp "
+              "-out {output} -num_threads {threads}")
+        shell("rm {input.query}.tmp")
 
 rule download_pear:
     output: "sw/pear"
@@ -111,7 +162,7 @@ rule merge_pairs:
                  -p 0.05 -q 25 -y 5G -j {threads} -v 4 -g 2 -e
     """
 
-rule  fastq_to_fasta:
+rule fastq_to_fasta:
     input: "outputs/merged/{sample}-{depth}D.assembled.fastq"
     output: "outputs/merged/{sample}-{depth}D.assembled.fasta.gz"
     shell: "fastq-to-fasta.py -n --gzip -o {output} {input}"
@@ -125,4 +176,4 @@ rule download_SUPERFOCUS:
         cd {SUPERFOCUS_DIR} && python superfocus__downloadDB.py rapsearch blast diamond
     """.format(SUPERFOCUS_DIR=SUPERFOCUS_DIR)
 
-ruleorder: prepare_db_seqs > prepare_db_cazy
+ruleorder: prepare_db_diamond_seqs > prepare_db_diamond_cazy
