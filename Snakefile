@@ -9,24 +9,29 @@ DBS = ["dbcan", #"tools.aa", "tools.ce", #"tools.gh",
 
 rule all:
     input:
-        expand("outputs/{tool}/{db}/{sample}-{depth}D.daa",
-               tool=['diamond', 'blast'],
+        expand("outputs/common/{db}.x.{sample}-{depth}D.csv",
                db=DBS,
                sample=[1, 2, 3],
                depth=[2, 6, 15]
                ),
-        expand("outputs/{tool}/{sample}-{depth}D/{db}.daa",
-               tool=['diamond', 'blast'],
-               db=DBS,
-               sample=[1, 2, 3],
-               depth=[2, 6, 15]
-               )
+#        expand("outputs/{tool}/{db}/{sample}-{depth}D.daa",
+#               tool=['diamond'], # 'blast'],
+#               db=DBS,
+#               sample=[1, 2, 3],
+#               depth=[2, 6, 15]
+#               ),
+#        expand("outputs/{tool}/{sample}-{depth}D/{db}.daa",
+#               tool=['diamond'], # 'blast'],
+#               db=DBS,
+#               sample=[1, 2, 3],
+#               depth=[2, 6, 15]
+#               )
 
 rule download_dbcan:
     output:
         "inputs/db/cazy.dbcan.fa"
     shell: """
-        wget http://csbl.bmb.uga.edu/dbCAN/download/CAZyDB.03172015.fa -O {output}
+        wget http://csbl.bmb.uga.edu/dbCAN/download/CAZyDB.07152016.fa -O {output}
     """
 
 rule download_cazy_tools:
@@ -81,6 +86,7 @@ rule diamond_search_seqs:
     threads: 4
     shell: """
         diamond blastp -k 100 --sensitive \
+                       -e 1e-10 \
                        -d {input.db} -q {input.query} \
                        -a {output} -p {threads}
     """
@@ -93,9 +99,26 @@ rule diamond_search_db:
     threads: 4
     shell: """
         diamond blastx -k 100 --sensitive \
+                       -e 1e-10 \
                        -d {input.db} -q {input.query} \
                        -a {output} -p {threads}
     """
+
+rule diamond_convert_output:
+    input:
+      "outputs/diamond/{db}/{query}.daa"
+    output:
+      "outputs/diamond/{db}/{query}.out.gz"
+    shell:
+        "diamond view -a {input} | gzip > {output}"
+
+rule find_common_occurences:
+    input:
+      "outputs/diamond/{db}/{query}.out.gz"
+    output:
+      "outputs/common/{db}.x.{query}.csv"
+    shell:
+      "touch {output}"
 
 rule blast_search_seqs:
     input:
@@ -105,7 +128,7 @@ rule blast_search_seqs:
     threads: 16
     run:
         db = os.path.splitext(input.db)[0]
-        shell("blastp -evalue 1e9 -outfmt 6 "
+        shell("blastp -evalue 1e-10 -outfmt 6 "
               "-db {db} -query {input.query} "
               "-out {output} -num_threads {threads}")
 
@@ -118,7 +141,7 @@ rule blast_search_db:
     run:
         db = os.path.splitext(input.db)[0]
         shell("gunzip -c {input.query} > {input.query}.tmp")
-        shell("blastx -evalue 1e9 -outfmt 6 "
+        shell("blastx -evalue 1e-10 -outfmt 6 "
               "-db {db} -query {input.query}.tmp "
               "-out {output} -num_threads {threads}")
         shell("rm {input.query}.tmp")
